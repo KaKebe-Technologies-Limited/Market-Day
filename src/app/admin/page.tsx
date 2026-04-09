@@ -2,6 +2,7 @@
 import "../globals.css";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Html5Qrcode } from "html5-qrcode";
+import { Eye, EyeOff } from "lucide-react";
 
 type VerifyResult = {
   status: "VALID" | "INVALID" | "ALREADY_USED" | "NOT_PAID" | "ERROR";
@@ -109,6 +110,7 @@ export default function AdminPage() {
 
   const [isScanning, setIsScanning] = useState(false);
   const [cameraError, setCameraError] = useState("");
+  const [cameraLoading, setCameraLoading] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerRef = useRef<HTMLDivElement>(null);
 
@@ -217,29 +219,96 @@ export default function AdminPage() {
   );
 
   const onScanError = useCallback((error: string) => {
-    console.warn("Scan error:", error);
+    // Only log parsing errors, not "no code found" messages
+    if (!error.includes("No code")) {
+      console.warn("Scan error:", error);
+    }
   }, []);
 
-  function startScanner() {
+  async function startScanner() {
     if (scannerRef.current) return;
+
+    // Check if we're on HTTPS (required for camera access)
+    if (
+      window.location.protocol !== "https:" &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1"
+    ) {
+      setCameraError(
+        "Camera requires HTTPS. Please access the site via HTTPS or use manual code entry.",
+      );
+      return;
+    }
+
+    setCameraLoading(true);
+    setCameraError("");
+
     const scanner = new Html5Qrcode("qr-reader");
     scannerRef.current = scanner;
-    scanner
-      .start(
+
+    // Configuration optimized for mobile
+    const config = {
+      fps: 15, // Higher FPS for faster detection
+      qrbox: { width: 200, height: 200 }, // Smaller box for mobile
+      aspectRatio: 1.0,
+      disableFlip: false,
+      verbose: false,
+    };
+
+    try {
+      // First try environment (back) camera
+      await scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        config,
         onScanSuccess,
         onScanError,
-      )
-      .catch((err) => {
-        console.error("Failed to start scanner:", err);
-        setCameraError(
-          "Could not access camera. Please check permissions or use manual entry.",
+      );
+      setIsScanning(true);
+      setCameraLoading(false);
+    } catch (err: any) {
+      console.warn("Environment camera failed, trying user camera:", err);
+
+      try {
+        // Fallback to user (front) camera
+        await scanner.start(
+          { facingMode: "user" },
+          config,
+          onScanSuccess,
+          onScanError,
         );
+        setIsScanning(true);
+        setCameraLoading(false);
+      } catch (fallbackErr: any) {
+        console.error("All cameras failed:", fallbackErr);
         setIsScanning(false);
-      });
-    setIsScanning(true);
-    setCameraError("");
+        setCameraLoading(false);
+
+        // Provide specific error messages
+        let errorMsg = "Could not access camera. ";
+        if (
+          fallbackErr.name === "NotAllowedError" ||
+          fallbackErr.message.includes("Permission")
+        ) {
+          errorMsg +=
+            "Camera permission denied. Please allow camera access in your browser settings.";
+        } else if (
+          fallbackErr.name === "NotFoundError" ||
+          fallbackErr.message.includes("not found")
+        ) {
+          errorMsg += "No camera found on this device.";
+        } else if (
+          fallbackErr.name === "NotReadableError" ||
+          fallbackErr.message.includes("in use")
+        ) {
+          errorMsg +=
+            "Camera is being used by another app. Please close other apps using the camera.";
+        } else {
+          errorMsg += "Please check permissions or use manual entry.";
+        }
+
+        setCameraError(errorMsg);
+      }
+    }
   }
 
   function stopScanner() {
@@ -305,12 +374,27 @@ export default function AdminPage() {
 
   async function loadEntries() {
     setEntriesLoading(true);
+    setPulling(false);
     try {
       const res = await fetch("/api/admin/entries", {
         headers: { "x-admin-password": password },
       });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error! status: ${res.status}`);
+      }
+
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Invalid response format - expected JSON");
+      }
+
       const data = await res.json();
       setEntries(data.entries || []);
+    } catch (error) {
+      console.error("Failed to load entries:", error);
+      // Don't crash the app, just show empty entries
+      setEntries([]);
     } finally {
       setEntriesLoading(false);
       setPulling(false);
@@ -354,8 +438,13 @@ export default function AdminPage() {
                 type="button"
                 className="password-toggle"
                 onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
               >
-                {showPassword ? "👁️‍🗨️" : "👁️"}
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
             {authError && <div style={styles.errorBox}>{authError}</div>}
@@ -377,7 +466,6 @@ export default function AdminPage() {
         <div style={styles.logoText}>MARKET DAY</div>
         <div style={styles.logoSubtext}>Gate Staff Portal</div>
         <div style={styles.adminHeader}>
-          <div style={styles.tagline}>GATE ADMIN</div>
           <div style={styles.tabs} className="swipe-container" ref={tabsRef}>
             {(["verify", "walkin", "entries"] as Tab[]).map((t) => (
               <button
@@ -410,7 +498,7 @@ export default function AdminPage() {
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === "Enter" && verify()}
                 style={{
-                  fontFamily: "var(--mono)",
+                  fontFamily: "var(--sans)",
                   fontSize: 18,
                   letterSpacing: "0.06em",
                 }}
@@ -436,6 +524,14 @@ export default function AdminPage() {
               >
                 {isScanning ? "📷 Stop Camera" : "📷 Scan QR Code"}
               </button>
+              {cameraLoading && (
+                <div style={{ ...styles.cameraLoading, marginTop: 10 }}>
+                  <span className="animate-spin" style={{ marginRight: 8 }}>
+                    ⟳
+                  </span>
+                  Starting camera...
+                </div>
+              )}
               {cameraError && (
                 <div
                   style={{ ...styles.errorBox, marginTop: 10, fontSize: 13 }}
@@ -481,7 +577,7 @@ export default function AdminPage() {
                     <div
                       style={{
                         fontSize: 13,
-                        fontFamily: "var(--mono)",
+                        fontFamily: "var(--sans)",
                         color: cfg.color,
                         letterSpacing: "0.08em",
                         fontWeight: 700,
@@ -522,7 +618,7 @@ export default function AdminPage() {
             <div style={styles.hint}>
               Type a code like{" "}
               <span
-                style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}
+                style={{ fontFamily: "var(--sans)", color: "var(--accent)" }}
               >
                 MKD-XXXXXX
               </span>{" "}
@@ -677,7 +773,7 @@ export default function AdminPage() {
                       </div>
                       <div
                         style={{
-                          fontFamily: "var(--mono)",
+                          fontFamily: "var(--sans)",
                           fontSize: 12,
                           color: "var(--accent)",
                           marginTop: 2,
@@ -871,7 +967,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius-sm)",
     padding: "12px 16px",
     fontSize: 14,
-    fontFamily: "var(--mono)",
+    fontFamily: "var(--sans)",
   },
   scannerSection: {
     marginTop: 16,
@@ -886,6 +982,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "var(--radius)",
     overflow: "hidden",
     border: "2px solid var(--border)",
+  },
+  cameraLoading: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "16px",
+    color: "var(--muted)",
+    fontSize: 14,
   },
   markPaidBtn: {
     marginTop: 14,
