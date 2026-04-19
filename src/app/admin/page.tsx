@@ -1,7 +1,6 @@
 "use client";
 import "../globals.css";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Html5Qrcode } from "html5-qrcode";
 import { Eye, EyeOff } from "lucide-react";
 
 type VerifyResult = {
@@ -111,7 +110,7 @@ export default function AdminPage() {
   const [isScanning, setIsScanning] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [cameraLoading, setCameraLoading] = useState(false);
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<any>(null);
   const scannerContainerRef = useRef<HTMLDivElement>(null);
 
   const [walkinName, setWalkinName] = useState("");
@@ -243,6 +242,7 @@ export default function AdminPage() {
     setCameraLoading(true);
     setCameraError("");
 
+    const { Html5Qrcode } = await import("html5-qrcode");
     const scanner = new Html5Qrcode("qr-reader");
     scannerRef.current = scanner;
 
