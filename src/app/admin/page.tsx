@@ -108,10 +108,12 @@ export default function AdminPage() {
   const tabsRef = useRef<HTMLDivElement>(null);
 
   const [isScanning, setIsScanning] = useState(false);
+  const [scannerDivVisible, setScannerDivVisible] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [cameraLoading, setCameraLoading] = useState(false);
   const scannerRef = useRef<any>(null);
   const scannerContainerRef = useRef<HTMLDivElement>(null);
+  const pendingStart = useRef(false);
 
   const [walkinName, setWalkinName] = useState("");
   const [walkinPhone, setWalkinPhone] = useState("");
@@ -151,6 +153,90 @@ export default function AdminPage() {
       if (scannerRef.current) stopScanner();
     };
   }, []);
+
+  useEffect(() => {
+    if (!scannerDivVisible || !pendingStart.current) return;
+    pendingStart.current = false;
+
+    if (
+      window.location.protocol !== "https:" &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1"
+    ) {
+      setCameraError(
+        "Camera requires HTTPS. Please access the site via HTTPS or use manual code entry.",
+      );
+      setScannerDivVisible(false);
+      setCameraLoading(false);
+      return;
+    }
+
+    (async () => {
+      const { Html5Qrcode } = await import("html5-qrcode");
+      const scanner = new Html5Qrcode("qr-reader");
+      scannerRef.current = scanner;
+
+      const config = {
+        fps: 15,
+        qrbox: { width: 200, height: 200 },
+        aspectRatio: 1.0,
+        disableFlip: false,
+        verbose: false,
+      };
+
+      try {
+        await scanner.start(
+          { facingMode: "environment" },
+          config,
+          onScanSuccess,
+          onScanError,
+        );
+        setIsScanning(true);
+        setCameraLoading(false);
+      } catch (err: any) {
+        console.warn("Environment camera failed, trying user camera:", err);
+        try {
+          await scanner.start(
+            { facingMode: "user" },
+            config,
+            onScanSuccess,
+            onScanError,
+          );
+          setIsScanning(true);
+          setCameraLoading(false);
+        } catch (fallbackErr: any) {
+          console.error("All cameras failed:", fallbackErr);
+          scannerRef.current = null;
+          setIsScanning(false);
+          setScannerDivVisible(false);
+          setCameraLoading(false);
+
+          let errorMsg = "Could not access camera. ";
+          if (
+            fallbackErr.name === "NotAllowedError" ||
+            fallbackErr.message?.includes("Permission")
+          ) {
+            errorMsg +=
+              "Camera permission denied. Please allow camera access in your browser settings.";
+          } else if (
+            fallbackErr.name === "NotFoundError" ||
+            fallbackErr.message?.includes("not found")
+          ) {
+            errorMsg += "No camera found on this device.";
+          } else if (
+            fallbackErr.name === "NotReadableError" ||
+            fallbackErr.message?.includes("in use")
+          ) {
+            errorMsg +=
+              "Camera is being used by another app. Please close other apps using the camera.";
+          } else {
+            errorMsg += "Please check permissions or use manual entry.";
+          }
+          setCameraError(errorMsg);
+        }
+      }
+    })();
+  }, [scannerDivVisible, onScanSuccess, onScanError]);
 
   useEffect(() => {
     if (tab === "entries" && authed) loadEntries();
@@ -224,109 +310,37 @@ export default function AdminPage() {
     }
   }, []);
 
-  async function startScanner() {
-    if (scannerRef.current) return;
-
-    // Check if we're on HTTPS (required for camera access)
-    if (
-      window.location.protocol !== "https:" &&
-      window.location.hostname !== "localhost" &&
-      window.location.hostname !== "127.0.0.1"
-    ) {
-      setCameraError(
-        "Camera requires HTTPS. Please access the site via HTTPS or use manual code entry.",
-      );
-      return;
-    }
-
+  function startScanner() {
+    if (scannerRef.current || pendingStart.current) return;
     setCameraLoading(true);
     setCameraError("");
-
-    const { Html5Qrcode } = await import("html5-qrcode");
-    const scanner = new Html5Qrcode("qr-reader");
-    scannerRef.current = scanner;
-
-    // Configuration optimized for mobile
-    const config = {
-      fps: 15, // Higher FPS for faster detection
-      qrbox: { width: 200, height: 200 }, // Smaller box for mobile
-      aspectRatio: 1.0,
-      disableFlip: false,
-      verbose: false,
-    };
-
-    try {
-      // First try environment (back) camera
-      await scanner.start(
-        { facingMode: "environment" },
-        config,
-        onScanSuccess,
-        onScanError,
-      );
-      setIsScanning(true);
-      setCameraLoading(false);
-    } catch (err: any) {
-      console.warn("Environment camera failed, trying user camera:", err);
-
-      try {
-        // Fallback to user (front) camera
-        await scanner.start(
-          { facingMode: "user" },
-          config,
-          onScanSuccess,
-          onScanError,
-        );
-        setIsScanning(true);
-        setCameraLoading(false);
-      } catch (fallbackErr: any) {
-        console.error("All cameras failed:", fallbackErr);
-        setIsScanning(false);
-        setCameraLoading(false);
-
-        // Provide specific error messages
-        let errorMsg = "Could not access camera. ";
-        if (
-          fallbackErr.name === "NotAllowedError" ||
-          fallbackErr.message.includes("Permission")
-        ) {
-          errorMsg +=
-            "Camera permission denied. Please allow camera access in your browser settings.";
-        } else if (
-          fallbackErr.name === "NotFoundError" ||
-          fallbackErr.message.includes("not found")
-        ) {
-          errorMsg += "No camera found on this device.";
-        } else if (
-          fallbackErr.name === "NotReadableError" ||
-          fallbackErr.message.includes("in use")
-        ) {
-          errorMsg +=
-            "Camera is being used by another app. Please close other apps using the camera.";
-        } else {
-          errorMsg += "Please check permissions or use manual entry.";
-        }
-
-        setCameraError(errorMsg);
-      }
-    }
+    pendingStart.current = true;
+    setScannerDivVisible(true);
   }
 
   function stopScanner() {
+    pendingStart.current = false;
     if (scannerRef.current) {
       scannerRef.current
         .stop()
         .then(() => {
           scannerRef.current = null;
           setIsScanning(false);
+          setScannerDivVisible(false);
         })
-        .catch(() => {});
+        .catch(() => {
+          scannerRef.current = null;
+          setIsScanning(false);
+          setScannerDivVisible(false);
+        });
     } else {
       setIsScanning(false);
+      setScannerDivVisible(false);
     }
   }
 
   function toggleScanner() {
-    if (isScanning) stopScanner();
+    if (isScanning || scannerDivVisible) stopScanner();
     else startScanner();
   }
 
@@ -522,7 +536,7 @@ export default function AdminPage() {
                 className="btn-secondary"
                 style={{ width: "auto", padding: "12px 20px", fontSize: 14 }}
               >
-                {isScanning ? "📷 Stop Camera" : "📷 Scan QR Code"}
+                {isScanning || scannerDivVisible ? "📷 Stop Camera" : "📷 Scan QR Code"}
               </button>
               {cameraLoading && (
                 <div style={{ ...styles.cameraLoading, marginTop: 10 }}>
@@ -539,7 +553,7 @@ export default function AdminPage() {
                   {cameraError}
                 </div>
               )}
-              {isScanning && (
+              {scannerDivVisible && (
                 <div ref={scannerContainerRef} style={styles.scannerContainer}>
                   <div id="qr-reader" style={{ width: "100%" }}></div>
                 </div>
