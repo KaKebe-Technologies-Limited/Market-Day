@@ -155,6 +155,77 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    if (tab === "entries" && authed) loadEntries();
+  }, [tab, authed]);
+
+  function login(e: React.FormEvent) {
+    e.preventDefault();
+    if (password === "marketday2026" || password) {
+      setAuthed(true);
+      setAuthError("");
+    }
+  }
+
+  const verify = useCallback(
+    async (codeToVerify?: string) => {
+      const target = (codeToVerify ?? code).trim().toUpperCase();
+      if (!target) return;
+      setVerifying(true);
+      setResult(null);
+      try {
+        const res = await fetch("/api/verify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-password": password,
+          },
+          body: JSON.stringify({ code: target }),
+        });
+        const data = await res.json();
+        setResult(data);
+        if (data.status !== "VALID") {
+        } else setCode("");
+      } catch {
+        setResult({
+          status: "ERROR",
+          message: "Network error. Check connection.",
+        });
+      } finally {
+        setVerifying(false);
+      }
+    },
+    [code, password],
+  );
+
+  useEffect(() => {
+    if (/^MKD-[A-Z0-9]{6}$/.test(code.trim().toUpperCase())) {
+      verify(code.trim().toUpperCase());
+    }
+  }, [code, verify]);
+
+  const onScanSuccess = useCallback(
+    (decodedText: string) => {
+      const codeMatch = decodedText.match(/MKD-[A-Z0-9]{6}/i);
+      if (codeMatch) {
+        setCode(codeMatch[0].toUpperCase());
+        verify(codeMatch[0].toUpperCase());
+        stopScanner();
+      } else {
+        setCode(decodedText.toUpperCase());
+        verify(decodedText.toUpperCase());
+        stopScanner();
+      }
+    },
+    [verify],
+  );
+
+  const onScanError = useCallback((error: string) => {
+    if (!error.includes("No code")) {
+      console.warn("Scan error:", error);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!scannerDivVisible || !pendingStart.current) return;
     pendingStart.current = false;
 
@@ -237,78 +308,6 @@ export default function AdminPage() {
       }
     })();
   }, [scannerDivVisible, onScanSuccess, onScanError]);
-
-  useEffect(() => {
-    if (tab === "entries" && authed) loadEntries();
-  }, [tab, authed]);
-
-  function login(e: React.FormEvent) {
-    e.preventDefault();
-    if (password === "marketday2026" || password) {
-      setAuthed(true);
-      setAuthError("");
-    }
-  }
-
-  const verify = useCallback(
-    async (codeToVerify?: string) => {
-      const target = (codeToVerify ?? code).trim().toUpperCase();
-      if (!target) return;
-      setVerifying(true);
-      setResult(null);
-      try {
-        const res = await fetch("/api/verify", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-admin-password": password,
-          },
-          body: JSON.stringify({ code: target }),
-        });
-        const data = await res.json();
-        setResult(data);
-        if (data.status !== "VALID") {
-        } else setCode("");
-      } catch {
-        setResult({
-          status: "ERROR",
-          message: "Network error. Check connection.",
-        });
-      } finally {
-        setVerifying(false);
-      }
-    },
-    [code, password],
-  );
-
-  useEffect(() => {
-    if (/^MKD-[A-Z0-9]{6}$/.test(code.trim().toUpperCase())) {
-      verify(code.trim().toUpperCase());
-    }
-  }, [code, verify]);
-
-  const onScanSuccess = useCallback(
-    (decodedText: string) => {
-      const codeMatch = decodedText.match(/MKD-[A-Z0-9]{6}/i);
-      if (codeMatch) {
-        setCode(codeMatch[0].toUpperCase());
-        verify(codeMatch[0].toUpperCase());
-        stopScanner();
-      } else {
-        setCode(decodedText.toUpperCase());
-        verify(decodedText.toUpperCase());
-        stopScanner();
-      }
-    },
-    [verify],
-  );
-
-  const onScanError = useCallback((error: string) => {
-    // Only log parsing errors, not "no code found" messages
-    if (!error.includes("No code")) {
-      console.warn("Scan error:", error);
-    }
-  }, []);
 
   function startScanner() {
     if (scannerRef.current || pendingStart.current) return;
